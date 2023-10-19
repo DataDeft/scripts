@@ -67,7 +67,6 @@ def delete_policy(arn):
 
 
 if len(sys.argv) > 1:
-
     policies = list_policies(sys.argv[1])
 
     if len(policies) > 0:
@@ -75,7 +74,7 @@ if len(sys.argv) > 1:
     else:
         print(f"[-] There is no policy matching the pattern: {sys.argv[1]}")
         sys.exit(0)
-        
+
     policy_versions = [
         {arn: get_version_ids(list_policy_versions(arn))} for arn in policies
     ]
