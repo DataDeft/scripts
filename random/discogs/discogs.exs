@@ -1,10 +1,26 @@
 Mix.install([
-  {:brotli, "~> 0.3.0"}
+  {:stream_gzip, "~> 0.4"}
 ])
 
 defmodule Http do
   def save_to_file(url, file_path) do
+    IO.inspect("Downloading #{url} to #{file_path}")
     :httpc.request(:get, {String.to_charlist(url), []}, [], stream: String.to_charlist(file_path))
+  end
+end
+
+defmodule Helpers do
+  def log(xs, message) do
+    IO.inspect("#{message} : #{xs}")
+    xs
+  end
+
+  def stream_hash_file(file_path) do
+    File.stream!(file_path)
+    |> Enum.reduce(:crypto.hash_init(:sha256), &:crypto.hash_update(&2, &1))
+    |> :crypto.hash_final()
+    |> Base.encode16()
+    |> String.downcase()
   end
 end
 
@@ -29,11 +45,72 @@ case data_folder do
   _ -> IO.inspect("data folder creation has failed: #{inspect(data_folder)}")
 end
 
-[
+files = [
   checksum,
   artists,
   labels,
   masters,
   releases
 ]
-|> Enum.map(fn file -> Http.save_to_file("#{base_url}/#{file}", "data/#{file}") end)
+
+# Downloading
+
+files_to_download =
+  files
+  |> Enum.filter(fn file ->
+    Path.join("data", file)
+    |> File.exists?()
+    |> Kernel.not()
+  end)
+
+case files_to_download do
+  [] ->
+    IO.inspect("Nothing to download")
+
+  xs ->
+    xs
+    |> Helpers.log("Downloading the following: ")
+    |> Enum.each(fn file -> Http.save_to_file("#{base_url}/#{file}", Path.join("data", file)) end)
+end
+
+# Verifying
+
+checksum_content =
+  Path.join("data", checksum)
+  |> File.read!()
+  |> String.split("\n", trim: true)
+  |> Enum.map(&String.split(&1, "\ "))
+
+IO.inspect(checksum_content)
+
+# [
+#   [
+#     "583596bf5f05c23ec53...",
+#     "discogs_20231001_releases.xml.gz"
+#   ],
+#   [
+#     "b8b924434edcf83e0c5...",
+#     "discogs_20231001_masters.xml.gz"
+#   ]
+# ]
+
+# Broken
+
+# checksum_content
+# |> Enum.each(fn [h, f] ->
+#   hash_calculated = Helpers.stream_hash_file("data/#{f}")
+#   IO.inspect("Hash calculated: #{hash_calculated} ::: Hash got from Discogs: #{h}")
+# end)
+
+# Unzip
+
+[artists, labels, masters, releases]
+|> Enum.each(fn file ->
+  file_path = Path.join("data", file)
+  IO.inspect(file_path)
+
+  # "data/#{file}"
+  # |> File.stream!([:compressed])
+  # |> StreamGzip.gunzip()
+  # |> Stream.into(File.stream!("#{file}.gunzip"))
+end)
