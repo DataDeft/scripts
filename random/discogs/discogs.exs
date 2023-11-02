@@ -1,5 +1,7 @@
 Mix.install([
-  {:stream_gzip, "~> 0.4"}
+  {:stream_gzip, "~> 0.4"},
+  {:sweet_xml, "~> 0.7"},
+  {:arrow, git: "https://github.com/treebee/elixir-arrow.git"}
 ])
 
 defmodule Http do
@@ -105,12 +107,62 @@ IO.inspect(checksum_content)
 # Unzip
 
 [artists, labels, masters, releases]
+|> Enum.filter(fn file ->
+  Path.join("data", file)
+  |> String.replace(".gz", "")
+  |> File.exists?()
+  |> Kernel.not()
+end)
 |> Enum.each(fn file ->
   file_path = Path.join("data", file)
   IO.inspect(file_path)
+  # zcat data/discogs_20231001_artists.xml.gz > data/discogs_20231001_artists.xml
+  System.cmd("gzcat", [file_path], into: File.stream!(String.replace(file_path, ".gz", "")))
 
-  # "data/#{file}"
-  # |> File.stream!([:compressed])
-  # |> StreamGzip.gunzip()
-  # |> Stream.into(File.stream!("#{file}.gunzip"))
+  # File.stream!([:binary], 1024)
+  # StreamGzip.gunzip()
 end)
+
+IO.inspect("Decompression is done")
+
+# <artist>
+#   <id>13339863</id>
+#   <name>Darkside U.C.O.N.N.</name>
+#   <profile></profile>
+#   <data_quality>Needs Major Changes</data_quality>
+#   <namevariations>
+#   <name>Dark Side U.C.O.N.N.</name>
+#   <name>Uconn</name>
+#   </namevariations>
+# </artist>
+
+defmodule X do
+  import SweetXml
+
+  def convert_xml_to_csv(xs) do
+    xs
+    |> Enum.map(fn file ->
+      Path.join("data", file)
+      |> String.replace(".gz", "")
+    end)
+    |> Enum.each(fn file ->
+      IO.inspect("Processing #{file}")
+
+      file
+      |> File.stream!()
+      |> SweetXml.stream_tags!(:artist, discard: [:artist])
+      |> Stream.map(fn {:artist, doc} ->
+        doc
+        |> SweetXml.xpath(~x"//artist"e, id: ~x"./id/text()"s, name: ~x"./name/text()"s)
+      end)
+      |> Stream.map(fn m -> "#{m.id}, \"#{m.name}\"\n" end)
+      # |> Stream.map(&IO.inspect/1)
+      |> Stream.into(File.stream!(String.replace(file, ".xml", ".csv")))
+      |> Stream.run()
+    end)
+  end
+end
+
+X.convert_xml_to_csv([artists])
+
+# xml |> xpath(~x"//artist"e, id: ~x"./id/text()"s, name: ~x"./name/text()"s)
