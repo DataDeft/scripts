@@ -1,7 +1,7 @@
 Mix.install([
   {:stream_gzip, "~> 0.4"},
   {:sweet_xml, "~> 0.7"},
-  {:arrow, git: "https://github.com/treebee/elixir-arrow.git"}
+  {:csv, "~> 3.2"}
 ])
 
 defmodule Http do
@@ -23,6 +23,16 @@ defmodule Helpers do
     |> :crypto.hash_final()
     |> Base.encode16()
     |> String.downcase()
+  end
+
+  def xml_file_converted?(file_base_name) do
+    Path.join("data", file_base_name)
+    |> String.replace(".xml.gz", ".csv")
+    |> File.exists?()
+  end
+
+  def prepend_data_folder(file_path) do
+    Path.join("data", file_path)
   end
 end
 
@@ -136,33 +146,49 @@ IO.inspect("Decompression is done")
 #   </namevariations>
 # </artist>
 
-defmodule X do
+defmodule Transform do
   import SweetXml
 
-  def convert_xml_to_csv(xs) do
-    xs
-    |> Enum.map(fn file ->
-      Path.join("data", file)
-      |> String.replace(".gz", "")
-    end)
-    |> Enum.each(fn file ->
-      IO.inspect("Processing #{file}")
+  def xml_to_csv(xml_file, xml_tag) do
+    IO.inspect("Processing #{xml_file}")
+    csv_file_name = String.replace(xml_file, ".xml", ".csv")
 
-      file
-      |> File.stream!()
-      |> SweetXml.stream_tags!(:artist, discard: [:artist])
-      |> Stream.map(fn {:artist, doc} ->
-        doc
-        |> SweetXml.xpath(~x"//artist"e, id: ~x"./id/text()"s, name: ~x"./name/text()"s)
-      end)
-      |> Stream.map(fn m -> "#{m.id}, \"#{m.name}\"\n" end)
-      # |> Stream.map(&IO.inspect/1)
-      |> Stream.into(File.stream!(String.replace(file, ".xml", ".csv")))
-      |> Stream.run()
+    xml_file
+    |> File.stream!()
+    |> SweetXml.stream_tags!(xml_tag, discard: [:xml_tag])
+    |> Stream.map(fn {xml_tag, doc} ->
+      doc
+      |> SweetXml.xpath(~x"//#{xml_tag}"e, id: ~x"./id/text()"s, name: ~x"./name/text()"s)
     end)
+    |> Stream.map(fn x -> [x.id, x.name] end)
+    |> CSV.encode(separator: ?\t)
+    |> Stream.into(File.stream!(csv_file_name))
+    |> Stream.run()
   end
 end
 
-X.convert_xml_to_csv([artists])
+artists_converted = Helpers.xml_file_converted?(artists)
+labels_converted = Helpers.xml_file_converted?(labels)
+masters_converted = Helpers.xml_file_converted?(masters)
+releases_converted = Helpers.xml_file_converted?(releases)
 
-# xml |> xpath(~x"//artist"e, id: ~x"./id/text()"s, name: ~x"./name/text()"s)
+IO.inspect(%{
+  artists_converted: artists_converted,
+  labels_converted: labels_converted,
+  masters_converted: masters_converted,
+  releases_converted: releases_converted
+})
+
+unless artists_converted do
+  artists
+  |> String.replace(".gz", "")
+  |> Helpers.prepend_data_folder()
+  |> Transform.xml_to_csv(:artist)
+end
+
+unless releases_converted do
+  releases
+  |> String.replace(".gz", "")
+  |> Helpers.prepend_data_folder()
+  |> Transform.xml_to_csv(:release)
+end
