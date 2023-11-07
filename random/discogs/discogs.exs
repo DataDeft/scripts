@@ -1,8 +1,39 @@
 Mix.install([
+  {:csv, "~> 3.2"},
+  {:saxy, "~> 1.5"},
   {:stream_gzip, "~> 0.4"},
   {:sweet_xml, "~> 0.7"},
-  {:csv, "~> 3.2"}
+  {:nimble_parsec, "~> 1.3"}
 ])
+
+#
+# DEF
+#
+
+defmodule SimpleXML do
+  import NimbleParsec
+
+  tag = ascii_string([?a..?z, ?A..?Z], min: 1)
+  text = ascii_string([not: ?<], min: 1)
+
+  opening_tag =
+    ignore(string("<"))
+    |> concat(tag)
+    |> ignore(string(">"))
+
+  closing_tag =
+    ignore(string("</"))
+    |> concat(tag)
+    |> ignore(string(">"))
+
+  defparsec(
+    :xml,
+    opening_tag
+    |> repeat(lookahead_not(string("</")) |> choice([parsec(:xml), text]))
+    |> concat(closing_tag)
+    |> wrap()
+  )
+end
 
 defmodule Http do
   def save_to_file(url, file_path) do
@@ -36,8 +67,17 @@ defmodule Helpers do
   end
 end
 
+#
+# INIT
+#
+
 :inets.start()
 :ssl.start()
+:observer.start()
+
+#
+# ETL
+#
 
 base_url = "https://discogs-data-dumps.s3-us-west-2.amazonaws.com/data/2023"
 
@@ -46,6 +86,8 @@ artists = "discogs_20231001_artists.xml.gz"
 labels = "discogs_20231001_labels.xml.gz"
 masters = "discogs_20231001_masters.xml.gz"
 releases = "discogs_20231001_releases.xml.gz"
+
+sample_xml = "sample.xml.gz"
 
 IO.inspect([checksum, artists, labels, masters, releases])
 
@@ -149,20 +191,40 @@ IO.inspect("Decompression is done")
 defmodule Transform do
   import SweetXml
 
-  def xml_to_csv(xml_file, xml_tag) do
+  defp chunk_fun(element, acc) do
+    case element, acc do
+    end
+
+    # {:cont, chunk, acc} to emit a chunk and continue with the accumulator
+    # {:cont, acc} to not emit any chunk and continue with the accumulator
+    # {:halt, acc} to halt chunking over the enumerable.
+  end
+
+  defp after_fun(acc) do
+    [] -> {:cont, []}
+    chunk -> {:cont, Enum.reverse(chunk), []}
+  end
+
+  def xml_to_csv(xml_file) do
     IO.inspect("Processing #{xml_file}")
     csv_file_name = String.replace(xml_file, ".xml", ".csv")
+    {:ok, partial} = Saxy.Partial.new(XmlEventHandler)
 
     xml_file
     |> File.stream!()
-    |> SweetXml.stream_tags!(xml_tag, discard: [:xml_tag])
-    |> Stream.map(fn {xml_tag, doc} ->
-      doc
-      |> SweetXml.xpath(~x"//#{xml_tag}"e, id: ~x"./id/text()"s, name: ~x"./name/text()"s)
-    end)
-    |> Stream.map(fn x -> [x.id, x.name] end)
-    |> CSV.encode(separator: ?\t)
-    |> Stream.into(File.stream!(csv_file_name))
+    # |> SweetXml.stream_tags!(xml_tag, discard: [:xml_tag])
+    # |> Stream.map(fn {xml_tag, doc} ->
+    #   doc
+    #   |> SweetXml.xpath(~x"//#{xml_tag}"e, id: ~x"./id/text()"s, name: ~x"./name/text()"s)
+    # end)
+    # |> Stream.map(fn x -> [x.id, x.name] end)
+    |> Stream.map(&XmlStreamer.to_elements_stream/1)
+    # |> Saxy.parse_stream(Release, [])
+    |> Stream.map(&IO.inspect/1)
+    # |> CSV.encode(separator: ?\t)
+    # |> Stream.into(File.stream!(csv_file_name))
+
+    |> Stream.chunk_while([], &chunk_fun/2, &after_fun)
     |> Stream.run()
   end
 end
@@ -183,12 +245,19 @@ unless artists_converted do
   artists
   |> String.replace(".gz", "")
   |> Helpers.prepend_data_folder()
-  |> Transform.xml_to_csv(:artist)
+  |> Transform.xml_to_csv()
 end
 
-unless releases_converted do
-  releases
-  |> String.replace(".gz", "")
-  |> Helpers.prepend_data_folder()
-  |> Transform.xml_to_csv(:release)
-end
+sample_xml
+|> String.replace(".gz", "")
+|> Helpers.log("This")
+|> Helpers.prepend_data_folder()
+|> Helpers.log("That")
+|> Transform.xml_to_csv()
+
+# unless releases_converted do
+#   releases
+#   |> String.replace(".gz", "")
+#   |> Helpers.prepend_data_folder()
+#   |> Transform.xml_to_csv(:release)
+# end
