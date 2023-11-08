@@ -10,31 +10,6 @@ Mix.install([
 # DEF
 #
 
-defmodule SimpleXML do
-  import NimbleParsec
-
-  tag = ascii_string([?a..?z, ?A..?Z], min: 1)
-  text = ascii_string([not: ?<], min: 1)
-
-  opening_tag =
-    ignore(string("<"))
-    |> concat(tag)
-    |> ignore(string(">"))
-
-  closing_tag =
-    ignore(string("</"))
-    |> concat(tag)
-    |> ignore(string(">"))
-
-  defparsec(
-    :xml,
-    opening_tag
-    |> repeat(lookahead_not(string("</")) |> choice([parsec(:xml), text]))
-    |> concat(closing_tag)
-    |> wrap()
-  )
-end
-
 defmodule Http do
   def save_to_file(url, file_path) do
     IO.inspect("Downloading #{url} to #{file_path}")
@@ -177,54 +152,17 @@ end)
 
 IO.inspect("Decompression is done")
 
-# <artist>
-#   <id>13339863</id>
-#   <name>Darkside U.C.O.N.N.</name>
-#   <profile></profile>
-#   <data_quality>Needs Major Changes</data_quality>
-#   <namevariations>
-#   <name>Dark Side U.C.O.N.N.</name>
-#   <name>Uconn</name>
-#   </namevariations>
-# </artist>
-
 defmodule Transform do
   import SweetXml
-
-  defp chunk_fun(element, acc) do
-    case element, acc do
-    end
-
-    # {:cont, chunk, acc} to emit a chunk and continue with the accumulator
-    # {:cont, acc} to not emit any chunk and continue with the accumulator
-    # {:halt, acc} to halt chunking over the enumerable.
-  end
-
-  defp after_fun(acc) do
-    [] -> {:cont, []}
-    chunk -> {:cont, Enum.reverse(chunk), []}
-  end
 
   def xml_to_csv(xml_file) do
     IO.inspect("Processing #{xml_file}")
     csv_file_name = String.replace(xml_file, ".xml", ".csv")
-    {:ok, partial} = Saxy.Partial.new(XmlEventHandler)
 
     xml_file
     |> File.stream!()
-    # |> SweetXml.stream_tags!(xml_tag, discard: [:xml_tag])
-    # |> Stream.map(fn {xml_tag, doc} ->
-    #   doc
-    #   |> SweetXml.xpath(~x"//#{xml_tag}"e, id: ~x"./id/text()"s, name: ~x"./name/text()"s)
-    # end)
-    # |> Stream.map(fn x -> [x.id, x.name] end)
-    |> Stream.map(&XmlStreamer.to_elements_stream/1)
-    # |> Saxy.parse_stream(Release, [])
-    |> Stream.map(&IO.inspect/1)
-    # |> CSV.encode(separator: ?\t)
-    # |> Stream.into(File.stream!(csv_file_name))
-
-    |> Stream.chunk_while([], &chunk_fun/2, &after_fun)
+    # |> Stream.map(&IO.inspect/1)
+    |> Stream.map(&SimpleXML.xml/1)
     |> Stream.run()
   end
 end
@@ -254,10 +192,3 @@ sample_xml
 |> Helpers.prepend_data_folder()
 |> Helpers.log("That")
 |> Transform.xml_to_csv()
-
-# unless releases_converted do
-#   releases
-#   |> String.replace(".gz", "")
-#   |> Helpers.prepend_data_folder()
-#   |> Transform.xml_to_csv(:release)
-# end
