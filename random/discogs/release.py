@@ -1,73 +1,102 @@
-from lxml import etree
 import csv
+import pyarrow as pa
+import pyarrow.parquet as pq
+from xml.sax import parse, ContentHandler
 
 
-
-file_name = "data/discogs_20231001_releases.xml"
-# file_name = "data/sample.xml"
-
-f = open("data/discogs_20231001_releases.csv", "w")
-csv_writer = csv.DictWriter(
-    f=f,
-    fieldnames=["release_id", "release_title"],
-    delimiter="\t",
-)
-csv_writer.writeheader()
+release_base_name = "discogs_20231001_releases"
 
 
-def handle_artists(artists):
-    ret = []
-    for artist in artists:
-        artist_dict = {}
-        for artist_tag in artist:
-            if artist_tag.tag == "id":
-                artist_dict["id"] = artist_tag.text
-            elif artist_tag.tag == "name":
-                artist_dict["name"] = artist_tag.text
-        ret.append(artist_dict)
-    return ret
+class DiscogsFileHandler(ContentHandler):
+    def __init__(self, *, write_csv_row_release, csv_writer):
+        super().__init__()
+        self.current_release = None
+
+        self.write_csv_row_release = write_csv_row_release
+        self.csv_writer = csv_writer
+
+        self.tag_stack = []
+
+        self.char_buffer = ""
+
+    @property
+    def tag_path(self) -> tuple:
+        return tuple(self.tag_stack)
+
+    def startElement(self, name: str, attrs):
+        self.tag_stack.append(name)
+        path = self.tag_path
+        if path == ("releases", "release"):
+            assert not self.current_release
+            release = {
+                f"release_{k}": v
+                for k, v in {**dict(attrs)}.items()
+                if k in ("title", "id")
+            }
+            self.current_release = release
+
+    def endElement(self, name: str):
+        path = self.tag_path
+
+        # Adding title
+        if path == ("releases", "release", "title"):
+            self.current_release["release_title"] = self.char_buffer.strip()
+
+        # Adding notes
+        if path == ("releases", "release", "notes"):
+            self.current_release["release_notes"] = self.char_buffer.strip()
+
+        # Writing CSV row when finished constrocting the release object
+        if path == ("releases", "release"):
+            self.write_csv_row_release(self.csv_writer, self.current_release)
+            self.current_release = None
+
+        if path == ("releases",):
+            print("AIDDDSSSSSSSSSSSSS")
+
+        assert self.tag_stack.pop() == name
+        self.char_buffer = ""
+
+    def characters(self, content: str):
+        self.char_buffer += content
 
 
-def fast_iter(context, func, *args, **kwargs):
-    """
-    http://lxml.de/parsing.html#modifying-the-tree
-    Based on Liza Daly's fast_iter
-    http://www.ibm.com/developerworks/xml/library/x-hiperfparse/
-    See also http://effbot.org/zone/element-iterparse.htm
-    """
-    for event, elem in context:
-        func(elem, *args, **kwargs)
-        # It's safe to call clear() here because no descendants will be
-        # accessed
-        elem.clear()
-        # Also eliminate now-empty references from the root node to elem
-        for ancestor in elem.xpath("ancestor-or-self::*"):
-            while ancestor.getprevious() is not None:
-                del ancestor.getparent()[0]
-    del context
-
-
-def process_event(elem):
-    release = {}
-    if elem.tag == "release":
-        release_id = elem.get("id")
-        release = {"release_id": release_id}
-        for child in elem:
-            tag = child.tag
-            if tag == "title":
-                release["release_title"] = child.text
-            elif tag == "artists":
-                # release["artists"] = handle_artists(child)
-                pass
+def write_csv_row_release(csv_writer, release: dict):
     if release.get("release_title") != None:
         csv_writer.writerow(release)
 
 
-events = ("start",)
-context = etree.iterparse(file_name, events=events)
-fast_iter(context, process_event)
+def write_csv_file():
+    f = open(f"data/{release_base_name}.csv", "w")
+    csv_writer = csv.DictWriter(
+        f=f,
+        fieldnames=["release_id", "release_title", "release_notes"],
+        delimiter="\t",
+    )
+    csv_writer.writeheader()
+
+    file_name = f"data/{release_base_name}.xml"
+    # file_name = "data/sample.xml"
+    parse(
+        file_name,
+        DiscogsFileHandler(
+            write_csv_row_release=write_csv_row_release, csv_writer=csv_writer
+        ),
+    )
+
+    f.close()
 
 
-f.close()
+# def write_parq_file():
+#     release_schema = pa.schema(
+#         [
+#             ("release_id", pa.int64()),
+#             ("release_title", pa.string()),
+#             ("release_notes", pa.string()),
+#         ]
+#     )
+#     parquet_file = pq.ParquetFile(f"data/{release_base_name}.zstd.parq")
+#     pq.ParquetWriter.write()
 
-# context = lxml.etree.iterparse('really-big-file.xml', tag='schedule', events=('end',))
+
+write_csv_file()
