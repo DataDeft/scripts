@@ -18,7 +18,7 @@ def handle_artists(artists):
     return ret
 
 
-events = ("start", "end")
+events = ("start",)
 context = etree.iterparse(file_name, events=events)
 
 with open("data/discogs_20231001_releases.csv", "w") as f:
